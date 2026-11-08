@@ -16,7 +16,6 @@ import inspect
 import json
 from pathlib import Path
 
-from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 from fastmcp import Client
 from pydantic_ai.mcp import MCPToolset, StdioTransport
@@ -37,7 +36,8 @@ INSTRUCTIONS = """\
 - 回答の最後に、関係する回（第N回）を示す。
 - 宿題の答えそのものは書かず、考え方のヒントで導く。
 - 受講生が理解しにくそうな未解説の専門用語が含まれている場合は、自律的に再度 search_glossary を呼び出して深掘り調査を行うこと。
-
+- ユーザーから質問を受けて回答したら、質問とあなたが作成した回答を必ず save_learning_log ツールでlearning_log/ に保存してください。save_learning_log を呼び出すときは、質問と回答の両方を渡してください。
+- 学習記録の保存が拒否された場合は、保存されなかったことを回答で明示する。
 """
 
 # モデルは実行時に渡す（テストではAPIを呼ばない TestModel に差し替えるため）
@@ -53,7 +53,7 @@ agent.tool_plain(
     tools.save_learning_log,
     requires_approval=True,
 )
-# TODO(第3回 演習): tools.py に make_quiz を作り、ここで登録しよう
+
 
 # 第5回: 使う MCP サーバーの設定ファイル。Claude Desktop や Cursor と同じ "mcpServers" 形式
 MCP_CONFIG = Path(__file__).resolve().parent / "mcp_servers.json"
@@ -141,57 +141,42 @@ def main() -> None:
     print(f"[model] {MODEL}")
     if args.mcp:
         print("[tools] MCP サーバー（app/mcp_servers.json）")
-    #try:
-    #    result = target.run_sync(args.question, model=build_model())
-
-    #    if isinstance(result.output, DeferredToolRequests):
-    #        answer = input("学習記録を保存しますか？ [y/N]: ")
-    #
-            # answerに応じて承認または拒否の結果を作り、
-            # エージェントに渡して処理を再開する
     try:
-        # 【1回目】
+        # 1回目
         result = target.run_sync(args.question, model=build_model())
+        trace_result = result
 
-        # もし承認待ち（DeferredToolRequests）だったら
         if isinstance(result.output, DeferredToolRequests):
-            # 【デバッグ用】実際の仕様と中身を確認する！
-            import inspect
-            print("\n=== build_results の仕様 ===")
-            print(inspect.signature(result.output.build_results))
-            
-            print("\n=== 要求(DeferredToolRequests)の中身 ===")
-            print(vars(result.output))
-            print("========================================\n")
             answer = input("学習記録を保存しますか？ [y/N]: ")
             is_approved = answer.lower() in ["y", "yes"]
 
-            # 承認・拒否結果を作成して再開
+            approvals_dict = {
+                call.tool_call_id: is_approved
+                for call in result.output.approvals
+            }
+
             deferred_results = result.output.build_results(
-                approvals={"save_learning_log": is_approved}
+                approvals=approvals_dict
             )
+
             final_result = target.run_sync(
                 None,
                 model=build_model(),
                 conversation=result.conversation,
-                deferred_tool_results=deferred_results
+                deferred_tool_results=deferred_results,
             )
-            # 再開後の最終結果だけを表示
+
+            trace_result = final_result
             print(final_result.output)
 
         else:
-            # 承認待ちにならなかった場合はそのまま表示
             print(result.output)
-            
-        # print(result.output)  ← 最後の一文は削除！
 
     except ModelHTTPError as e:
         print(api_error_message(e.status_code, str(e.body)[:200]))
         raise SystemExit(1)
-    print(result.output)
+
     if args.trace:
-        print_trace(result)
-
-
+        print_trace(trace_result)
 if __name__ == "__main__":
     main()
