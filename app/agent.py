@@ -133,11 +133,6 @@ def main() -> None:
         print_tools(target)
         return
 
-    if isinstance(result.output, DeferredToolRequests):
-        answer = input("学習記録を保存しますか？ [y/N]: ")
-
-        # answerに応じて承認または拒否の結果を作り、
-        # エージェントに渡して処理を再開する
 
 
     if not args.question:
@@ -146,8 +141,50 @@ def main() -> None:
     print(f"[model] {MODEL}")
     if args.mcp:
         print("[tools] MCP サーバー（app/mcp_servers.json）")
+    #try:
+    #    result = target.run_sync(args.question, model=build_model())
+
+    #    if isinstance(result.output, DeferredToolRequests):
+    #        answer = input("学習記録を保存しますか？ [y/N]: ")
+    #
+            # answerに応じて承認または拒否の結果を作り、
+            # エージェントに渡して処理を再開する
     try:
+        # 【1回目】
         result = target.run_sync(args.question, model=build_model())
+
+        # もし承認待ち（DeferredToolRequests）だったら
+        if isinstance(result.output, DeferredToolRequests):
+            # 【デバッグ用】実際の仕様と中身を確認する！
+            import inspect
+            print("\n=== build_results の仕様 ===")
+            print(inspect.signature(result.output.build_results))
+            
+            print("\n=== 要求(DeferredToolRequests)の中身 ===")
+            print(vars(result.output))
+            print("========================================\n")
+            answer = input("学習記録を保存しますか？ [y/N]: ")
+            is_approved = answer.lower() in ["y", "yes"]
+
+            # 承認・拒否結果を作成して再開
+            deferred_results = result.output.build_results(
+                approvals={"save_learning_log": is_approved}
+            )
+            final_result = target.run_sync(
+                None,
+                model=build_model(),
+                conversation=result.conversation,
+                deferred_tool_results=deferred_results
+            )
+            # 再開後の最終結果だけを表示
+            print(final_result.output)
+
+        else:
+            # 承認待ちにならなかった場合はそのまま表示
+            print(result.output)
+            
+        # print(result.output)  ← 最後の一文は削除！
+
     except ModelHTTPError as e:
         print(api_error_message(e.status_code, str(e.body)[:200]))
         raise SystemExit(1)
