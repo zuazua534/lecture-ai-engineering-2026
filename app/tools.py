@@ -4,6 +4,7 @@
 説明文を書き換えると、モデルがツールを使うかどうか・どんな引数で呼ぶかが変わる。
 """
 
+from datetime import datetime
 import json
 import random
 from functools import cache
@@ -97,3 +98,28 @@ def make_quiz(lecture: int) -> str:
         },
         ensure_ascii=False,
     )
+def save_learning_log(question: str, answer: str) -> str:
+    """質問と回答を learning_log/ に保存する。"""
+
+    log_dir = Path("learning_log")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    log_file = log_dir / f"{timestamp}.md"
+
+    content = f"""# 学習記録
+
+## 質問
+
+{question}
+
+## 回答
+
+{answer}
+"""
+
+    log_file.write_text(content, encoding="utf-8")
+
+    return f"学習記録を保存しました: {log_file}"
+    
+    

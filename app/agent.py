@@ -16,7 +16,6 @@ import inspect
 import json
 from pathlib import Path
 
-from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 from fastmcp import Client
 from pydantic_ai.mcp import MCPToolset, StdioTransport
@@ -27,6 +26,7 @@ from pydantic_ai.providers.google import GoogleProvider
 
 from app import tools
 from app.config import MODEL, api_error_message, get_api_key
+from pydantic_ai import Agent, DeferredToolRequests
 
 INSTRUCTIONS = """\
 あなたはAIエンジニアリング講座（AIE2026）の学習支援エージェントです。
@@ -36,16 +36,24 @@ INSTRUCTIONS = """\
 - 回答の最後に、関係する回（第N回）を示す。
 - 宿題の答えそのものは書かず、考え方のヒントで導く。
 - 受講生が理解しにくそうな未解説の専門用語が含まれている場合は、自律的に再度 search_glossary を呼び出して深掘り調査を行うこと。
-
+- ユーザーから質問を受けて回答したら、質問とあなたが作成した回答を必ず save_learning_log ツールでlearning_log/ に保存してください。save_learning_log を呼び出すときは、質問と回答の両方を渡してください。
+- 学習記録の保存が拒否された場合は、保存されなかったことを回答で明示する。
 """
 
 # モデルは実行時に渡す（テストではAPIを呼ばない TestModel に差し替えるため）
-agent = Agent(instructions=INSTRUCTIONS)
+#agent = Agent(instructions=INSTRUCTIONS)
+agent = Agent(
+    instructions=INSTRUCTIONS,
+    output_type=[str, DeferredToolRequests],
+)
 agent.tool_plain(tools.search_glossary)
 agent.tool_plain(tools.get_lecture_summary)
 agent.tool_plain(tools.make_quiz)
+agent.tool_plain(
+    tools.save_learning_log,
+    requires_approval=True,
+)
 
-# TODO(第3回 演習): tools.py に make_quiz を作り、ここで登録しよう
 
 # 第5回: 使う MCP サーバーの設定ファイル。Claude Desktop や Cursor と同じ "mcpServers" 形式
 MCP_CONFIG = Path(__file__).resolve().parent / "mcp_servers.json"
@@ -124,6 +132,9 @@ def main() -> None:
     if args.list_tools:
         print_tools(target)
         return
+
+
+
     if not args.question:
         parser.error("質問を指定してください")
 
@@ -131,14 +142,41 @@ def main() -> None:
     if args.mcp:
         print("[tools] MCP サーバー（app/mcp_servers.json）")
     try:
+        # 1回目
         result = target.run_sync(args.question, model=build_model())
+        trace_result = result
+
+        if isinstance(result.output, DeferredToolRequests):
+            answer = input("学習記録を保存しますか？ [y/N]: ")
+            is_approved = answer.lower() in ["y", "yes"]
+
+            approvals_dict = {
+                call.tool_call_id: is_approved
+                for call in result.output.approvals
+            }
+
+            deferred_results = result.output.build_results(
+                approvals=approvals_dict
+            )
+
+            final_result = target.run_sync(
+                None,
+                model=build_model(),
+                conversation=result.conversation,
+                deferred_tool_results=deferred_results,
+            )
+
+            trace_result = final_result
+            print(final_result.output)
+
+        else:
+            print(result.output)
+
     except ModelHTTPError as e:
         print(api_error_message(e.status_code, str(e.body)[:200]))
         raise SystemExit(1)
-    print(result.output)
+
     if args.trace:
-        print_trace(result)
-
-
+        print_trace(trace_result)
 if __name__ == "__main__":
     main()
