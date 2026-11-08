@@ -27,6 +27,7 @@ from pydantic_ai.providers.google import GoogleProvider
 
 from app import tools
 from app.config import MODEL, api_error_message, get_api_key
+from pydantic_ai import Agent, DeferredToolRequests
 
 INSTRUCTIONS = """\
 あなたはAIエンジニアリング講座（AIE2026）の学習支援エージェントです。
@@ -40,11 +41,18 @@ INSTRUCTIONS = """\
 """
 
 # モデルは実行時に渡す（テストではAPIを呼ばない TestModel に差し替えるため）
-agent = Agent(instructions=INSTRUCTIONS)
+#agent = Agent(instructions=INSTRUCTIONS)
+agent = Agent(
+    instructions=INSTRUCTIONS,
+    output_type=[str, DeferredToolRequests],
+)
 agent.tool_plain(tools.search_glossary)
 agent.tool_plain(tools.get_lecture_summary)
 agent.tool_plain(tools.make_quiz)
-
+agent.tool_plain(
+    tools.save_learning_log,
+    requires_approval=True,
+)
 # TODO(第3回 演習): tools.py に make_quiz を作り、ここで登録しよう
 
 # 第5回: 使う MCP サーバーの設定ファイル。Claude Desktop や Cursor と同じ "mcpServers" 形式
@@ -124,6 +132,14 @@ def main() -> None:
     if args.list_tools:
         print_tools(target)
         return
+
+    if isinstance(result.output, DeferredToolRequests):
+        answer = input("学習記録を保存しますか？ [y/N]: ")
+
+        # answerに応じて承認または拒否の結果を作り、
+        # エージェントに渡して処理を再開する
+
+
     if not args.question:
         parser.error("質問を指定してください")
 
